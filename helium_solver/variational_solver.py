@@ -20,7 +20,8 @@ dt1dt2 = 8(pir1r2)^2dr1dr2d(cos(theta_12))
 
 #First will try slater type orbitals as basis: phy_i(r1, r2) = exp(-alpha_i(r1+r2))
 def phi(alpha , r1, r2):
-    return np.exp(-alpha*(r1+r2))
+    normalization = (alpha**3)/np.pi # normalization factor for basis phi
+    return normalization*np.exp(-alpha*(r1+r2))
 
 #Overlap Sij
 
@@ -58,10 +59,34 @@ def H_potential(alpha_i, alpha_j, Z=2):
     ]
 
     scale = 8*np.pi**2
-    return scale*nquad(integrand_overlap, limits, args=(alpha_i, alpha_j), opts={"limit":100})[0]
+    return scale*nquad(integrand_HV, limits, args=(alpha_i, alpha_j), opts={"limit":100})[0]
+
+#'ana;ytic result for kinetic term of H with STO's
+def H_kinetic(alpha_i, alpha_j):
+    return 64 * (alpha_i *alpha_j)**4 / ((alpha_i +alpha_j)**6) 
+
+from scipy.linalg import eigh
+
+alphas = [0.5, 1.0, 1.5, 2.0, 6.0] #alphas for basis functions
+n = len(alphas)
+
+#Initialize H and S matrices as 0,0s
+H = np.zeros((n,n))
+S = np.zeros((n,n))
+
+#Populate matrices with values from integrals
+
+for i in range(n):
+    for j in range(n):
+        S[i,j] = overlap(alphas[i], alphas[j])
+        H[i,j] = H_potential(alphas[i], alphas[j]) + H_kinetic(alphas[i], alphas[j])
+
+
 def main():
-    i =1
-    print(f'overlap({i},{i}) = {overlap(i,i)}')
+    E, C = eigh(H, S)
+    print(f"alpha values = {alphas}")
+    print(f"Energy eigenvalues: {E}")
+    print(f"Eigenvectors C = {C}")
 
 if __name__ == "__main__":
     main()
