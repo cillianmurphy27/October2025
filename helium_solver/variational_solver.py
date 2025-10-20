@@ -1,5 +1,6 @@
 import numpy as np
 from scipy.integrate import nquad
+from scipy.linalg import eigh
 
 '''
 Want toi compute hamiltonian componentents H_ij = <phi_i|H|phi_j>,
@@ -61,28 +62,91 @@ def H_potential(alpha_i, alpha_j, Z=2):
     scale = 8*np.pi**2
     return scale*nquad(integrand_HV, limits, args=(alpha_i, alpha_j), opts={"limit":100})[0]
 
-#'ana;ytic result for kinetic term of H with STO's
-def H_kinetic(alpha_i, alpha_j):
-    return 64 * (alpha_i *alpha_j)**4 / ((alpha_i +alpha_j)**6) 
+#numerical integration from -1 to 1 integral_a_^b f(x) ~ Sum_i^n wi *f(xi)
+from scipy.special import roots_legendre, roots_laguerre
+def Gauss_Legendre(f, a =-1 , b=1, n=100):
+    x, w = roots_legendre(n)
+    t = 0.5*(b-a)*x + 0.5*(b+a)
+    return 0.5*(b-a) * np.sum(w*f(t))
 
-from scipy.linalg import eigh
+#numerical integration for intgeral_0^inf exp(-x)f(x) ~ sum_i^n wi * f(xi)
+def Gauss_Laguerre(f, n =100):
+    x, w = roots_laguerre(n)
+    return np.sum(w * f(x))
 
-alphas = [0.5, 1.0, 1.5, 2.0, 6.0] #alphas for basis functions
-n = len(alphas)
+#analytic result for kinetic term of H with STO's
+#TODO: develop numerical method to solve kinetic term so can be extended to other types oif basis functions
+'''
+as only using radial functions for basis laplacian del^2 g(r) = g''(r) + 2/r * g'(r)
+For STO's and hamiltonian term above applied to phi_j this reduces to: -(alpha_j^2 - alpha_j(1/r1 + 1/r2))phi_j
 
-#Initialize H and S matrices as 0,0s
-H = np.zeros((n,n))
-S = np.zeros((n,n))
+'''
+def H_kinetic(alpha_i, alpha_j, Nr=40, Nu =40):
+ #number for sum for radial components Nr
+ #number of sum for cos(theta) components Nu
 
-#Populate matrices with values from integrals
+    factor = 8*((np.pi)**2)
+    beta = alpha_i +alpha_j
 
-for i in range(n):
-    for j in range(n):
-        S[i,j] = overlap(alphas[i], alphas[j])
-        H[i,j] = H_potential(alphas[i], alphas[j]) + H_kinetic(alphas[i], alphas[j])
+    # Gauss-Laguerre nodes/weights for integral int_0^inf e^{-x} f(x) dx
+    x_nodes, x_w = roots_laguerre(Nr)
+    # Gauss-Legendre nodes/weights for mu in [-1,1]
+    u_nodes, u_w = roots_legendre(Nu)
+
+    normalization = ((alpha_i**3)/np.pi)*((alpha_j**3)/np.pi)
+
+    T = 0 #initialize sum to zero
+    #Triple integral(sum) 
+    for p in range(Nr):
+        x_p = x_nodes[p]
+        w_p = x_w[p]
+        #change of variables from r -> xp/beta: dr -> dxp/beta
+        r1 = x_p/beta
+        jac_r1 = 1.0/beta
+
+        for q in range(Nr):
+            x_q = x_nodes[q]
+            w_q = x_w[q]
+            r2 = x_q/beta
+            jac_r2 = 1.0/beta
+
+            laplacian = -(alpha_j**2 - alpha_j*(1/r1 + 1/r2))
+
+            #this is f(x) in int_0^inf exp(-x)*f(x)
+            F_r = normalization*laplacian*r1*r1*r2*r2
+            #phi_ij = phi(alpha_i,r1, r2)*phi(alpha_j, r1, r2)
+            radial_weight = w_p*w_q*jac_r1*jac_r2
+            for k in range(Nu):
+                u= u_nodes[k]
+                w_u = u_w[k]
+
+                
+                #full intgrand including jacobian r1^2 r2^2
+                integrand = F_r *radial_weight*w_u
+
+                #accumulate with weights: integrand*radial_weight*w_u
+                T += integrand
+
+    return factor*T
+    #analytic result
+    #return 64 * (alpha_i *alpha_j)**4 / ((alpha_i +alpha_j)**6) 
+
 
 
 def main():
+    alphas = [ 1.0, 3.0, 6.0] #alphas for basis functions
+    n = len(alphas)
+
+    #Initialize H and S matrices as 0,0s
+    H = np.zeros((n,n))
+    S = np.zeros((n,n))
+
+    #Populate matrices with values from integrals
+
+    for i in range(n):
+        for j in range(n):
+            S[i,j] = overlap(alphas[i], alphas[j])
+            H[i,j] = H_potential(alphas[i], alphas[j]) + H_kinetic(alphas[i], alphas[j])
     E, C = eigh(H, S)
     print(f"alpha values = {alphas}")
     print(f"Energy eigenvalues: {E}")
