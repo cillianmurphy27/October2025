@@ -20,21 +20,25 @@ dt1dt2 = 8(pir1r2)^2dr1dr2d(cos(theta_12))
 '''
 
 #First will try slater type orbitals as basis: phy_i(r1, r2) = exp(-alpha_i(r1+r2))
-def phi(alpha , r1, r2):
+def STO_phi(alpha , r1, r2):
     normalization = (alpha**3)/np.pi # normalization factor for basis phi
     return normalization*np.exp(-alpha*(r1+r2))
 
 #Overlap Sij
-
 def r12(r1, r2, costh): #costh := cos(theta_12)
     return np.sqrt(r1**2 + r2**2 - 2*r1*r2*costh)
 
-def integrand_overlap(r1, r2, costh, alpha_i, alpha_j):
-    f = phi(alpha_i, r1, r2)
-    g = phi(alpha_j, r1, r2)
+def STO_integrand_overlap(r1, r2, costh, alpha_i, alpha_j):
+    f = STO_phi(alpha_i, r1, r2)
+    g = STO_phi(alpha_j, r1, r2)
     return f*g*((r1*r2)**2)
 
-def overlap(alpha_i, alpha_j):
+def Hy_integrand_overlap(r1, r2, costh, phi_i, phi_j):
+    r_12 = r12(r1,r2, costh)
+    return phi_i(r1,r2,costh)*phi_j(r1,r2,costh)*((r1*r2)**2)
+
+
+def STO_overlap(alpha_i, alpha_j):
     limits = [ 
         [0, np.inf],
         [0, np.inf],
@@ -42,17 +46,31 @@ def overlap(alpha_i, alpha_j):
     ]
 
     scale = 8*np.pi**2
-    return scale*nquad(integrand_overlap, limits, args=(alpha_i, alpha_j), opts={"limit":100})[0]
+    return scale*nquad(STO_integrand_overlap, limits, args=(alpha_i, alpha_j), opts={"limit":100})[0]
+
+def Hy_overlap(phi_i, phi_j):
+    limits = [ 
+        [0, np.inf],
+        [0, np.inf],
+        [-1, 1],
+    ]
+    scale = 8*np.pi**2
+    return scale*nquad(Hy_integrand_overlap, limits, args=(phi_i, phi_j), opts={"limit":100})[0]
 
 #Hij (just for potential component V initially):
-def integrand_HV(r1, r2, costh, alpha_i, alpha_j, Z=2):
-    f = phi(alpha_i, r1, r2)
-    g = phi(alpha_j, r1, r2)
+def STO_integrand_HV(r1, r2, costh, alpha_i, alpha_j, Z=2):
+    f = STO_phi(alpha_i, r1, r2)
+    g = STO_phi(alpha_j, r1, r2)
     r_12 = r12(r1, r2, costh)
     V = -Z*(1/r2+1/r2)+1/r_12
     return f*V*g*((r1*r2)**2)
 
-def H_potential(alpha_i, alpha_j, Z=2):
+def Hy_integrand_HV(r1, r2, costh, phi_i, phi_j, Z=2):
+    r_12 = r12(r1, r2, costh)
+    V = -Z*(1/r2+1/r2)+1/r_12
+    return phi_i(r1,r2,r_12)*V*phi_j(r1,r2,r_12)*((r1*r2)**2)
+
+def STO_H_potential(alpha_i, alpha_j, Z=2):
     limits = [ 
         [0, np.inf],
         [0, np.inf],
@@ -60,7 +78,17 @@ def H_potential(alpha_i, alpha_j, Z=2):
     ]
 
     scale = 8*np.pi**2
-    return scale*nquad(integrand_HV, limits, args=(alpha_i, alpha_j), opts={"limit":100})[0]
+    return scale*nquad(STO_integrand_HV, limits, args=(alpha_i, alpha_j), opts={"limit":100})[0]
+
+def Hy_H_potential(phi_i, phi_j):
+    limits = [ 
+        [0, np.inf],
+        [0, np.inf],
+        [-1, 1],
+    ]
+    scale = 8*np.pi**2
+    return scale*nquad(Hy_integrand_HV, limits, args=(phi_i, phi_j), opts={"limit":100})[0]
+
 
 #numerical integration from -1 to 1 integral_a_^b f(x) ~ Sum_i^n wi *f(xi)
 from scipy.special import roots_legendre, roots_laguerre
@@ -75,13 +103,13 @@ def Gauss_Laguerre(f, n =100):
     return np.sum(w * f(x))
 
 #analytic result for kinetic term of H with STO's
-#TODO: develop numerical method to solve kinetic term so can be extended to other types oif basis functions
+#TODO: develop numerical method to solve kinetic term for hylleraas basis fumctions
 '''
 as only using radial functions for basis laplacian del^2 g(r) = g''(r) + 2/r * g'(r)
 For STO's and hamiltonian term above applied to phi_j this reduces to: -(alpha_j^2 - alpha_j(1/r1 + 1/r2))phi_j
 
 '''
-def H_kinetic(alpha_i, alpha_j, Nr=40, Nu =40):
+def STO_H_kinetic(alpha_i, alpha_j, Nr=40, Nu =40):
  #number for sum for radial components Nr
  #number of sum for cos(theta) components Nu
 
@@ -116,6 +144,8 @@ def H_kinetic(alpha_i, alpha_j, Nr=40, Nu =40):
             F_r = normalization*laplacian*r1*r1*r2*r2
             #phi_ij = phi(alpha_i,r1, r2)*phi(alpha_j, r1, r2)
             radial_weight = w_p*w_q*jac_r1*jac_r2
+
+            #Don't need angular integral for STO's but will for more complex basis functions
             for k in range(Nu):
                 u= u_nodes[k]
                 w_u = u_w[k]
@@ -132,9 +162,7 @@ def H_kinetic(alpha_i, alpha_j, Nr=40, Nu =40):
     #return 64 * (alpha_i *alpha_j)**4 / ((alpha_i +alpha_j)**6) 
 
 
-
-def main():
-    alphas = [ 1.0, 3.0, 6.0] #alphas for basis functions
+def initialize_matrices(alphas, hylleraas=False):
     n = len(alphas)
 
     #Initialize H and S matrices as 0,0s
@@ -142,11 +170,19 @@ def main():
     S = np.zeros((n,n))
 
     #Populate matrices with values from integrals
+    if hylleraas:
+        pass
+    else:
+        for i in range(n):
+            for j in range(n):
+                S[i,j] = STO_overlap(alphas[i], alphas[j])
+                H[i,j] = STO_H_potential(alphas[i], alphas[j]) + STO_H_kinetic(alphas[i], alphas[j])
+    
+    return H, S
 
-    for i in range(n):
-        for j in range(n):
-            S[i,j] = overlap(alphas[i], alphas[j])
-            H[i,j] = H_potential(alphas[i], alphas[j]) + H_kinetic(alphas[i], alphas[j])
+def main():
+    alphas = [ 0.5, 1, 1.5] #alphas for basis functions
+    H, S = initialize_matrices(alphas)
     E, C = eigh(H, S)
     print(f"alpha values = {alphas}")
     print(f"Energy eigenvalues: {E}")
