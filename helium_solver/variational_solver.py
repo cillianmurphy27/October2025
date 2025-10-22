@@ -161,6 +161,28 @@ def STO_H_kinetic(alpha_i, alpha_j, Nr=40, Nu =40):
     #analytic result
     #return 64 * (alpha_i *alpha_j)**4 / ((alpha_i +alpha_j)**6) 
 
+'''
+let a := alpha 
+Exact form of (del_1^2 +del_2^2)phi_i = added to latex file which must be added to git
+'''
+
+def Hy_lapacian(phi_i):
+    params = phi_i['params']
+    m,n,p,a = params[0], params[1], params[2], params[3]
+    #This is a fucking mess, might need to try sympy for symbolic differentiation
+    def laplacian(r1, r2, r12):
+        t1 = (2*a**2)*(r1**m * r2**n * r12**p)*(r1/r2 +1 + r2/r2)
+        t2 = -2*a*(r1**(m-1) * r2**(n-1) * r12**(p-1))*(m*r2*r12 + n*r1*r12 + 2*p*r1*r2) 
+        t3 = (r1**(m-2))*(r2**(n-2))*(r12**(p-2))*(m*(m-1)*r2**2 * r12**2 + n*(n-1)*r1**2*r12**2 + 2*p*(p-1)*r1**2*r2**2)
+        t4 = (2*r1**(m-1)*r2**(n-1)*r12**(p-1))*((m*r2*r12)/r1 + (n*r1*r12)/r2+ (2*p*r1*r2)/r12)
+        t5 = 2*((r1**2 + r2**2 - r12**2)/(r1*r2))*(m*n*r1**(m-1)*r1**(n-1)*r12**p - a*m*r1**(m)*r2**(n-1)*r12**p - a*n*r1**(m-1)*r2**n*r12**p + a**2*r1**m*r2**n*r12**p)
+        t6 = 2*((r1**2 - r2**2 + r12**2)/(r1*r12))*(m*p*r1**(m-1)*r2**n*r12**(p-1) - a*p*r1**m*r2**n*r12*(p-1))
+        t7 = 2*((-r1**2 + r2**2 + r12**2)/(r2*r12))*(n*p*r1**(m)*r2**(n-1)*r12**(p-1) - a*p*r1**m*r2**n*r12*(p-1))
+        P= t1+t2+t3+t4+t5+t6+t7
+        
+        return P 
+    return laplacian
+
 
 def initialize_matrices(alphas, hylleraas=False):
     n = len(alphas)
