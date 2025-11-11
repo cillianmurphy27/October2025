@@ -1,6 +1,8 @@
 import numpy as np
 from scipy.integrate import nquad
 from scipy.linalg import eigh
+from scipy.special import roots_legendre, roots_laguerre
+import itertools
 
 '''
 Want toi compute hamiltonian componentents H_ij = <phi_i|H|phi_j>,
@@ -19,196 +21,202 @@ dt1dt2 = 8(pir1r2)^2dr1dr2d(cos(theta_12))
 
 '''
 
-#First will try slater type orbitals as basis: phy_i(r1, r2) = exp(-alpha_i(r1+r2))
-def STO_phi(alpha , r1, r2):
-    normalization = (alpha**3)/np.pi # normalization factor for basis phi
-    return normalization*np.exp(-alpha*(r1+r2))
+#modified form hyllerass.py file onlyreturn the params 
+#alpha 1.68 close to optimal, will solve for this independantly later
+def hylleraas_basis(N_max=2, alpha = 1.68):
+    '''
+    Returns a list of Hylleraas basis parameters (m,n,p,alpha).
+    Generates unique, symmetric combinations where m+n+p <= N_max.
+    '''
 
-#Overlap Sij
+    basis = []
+
+    for m,n,p in itertools.product(range(N_max+1), repeat = 3):
+        # Only include terms where m >= n to avoid duplicates
+        # e.g., (m=0, n=1) is the same as (m=1, n=0)
+        # We also enforce the N_max condition
+        if m+n+p <= N_max and m >= n:
+            basis.append((m, n, p, alpha))
+    
+    return basis
+
 def r12(r1, r2, costh): #costh := cos(theta_12)
     return np.sqrt(r1**2 + r2**2 - 2*r1*r2*costh)
 
-def STO_integrand_overlap(r1, r2, costh, alpha_i, alpha_j):
-    f = STO_phi(alpha_i, r1, r2)
-    g = STO_phi(alpha_j, r1, r2)
-    return f*g*((r1*r2)**2)
+def phi_polynomial(m, n, p, r1, r2, r_12):
+    '''
+    Calculates teh polynomial part of Hyleraas basis function.
+    '''
+    if m == n:
+        return (r1**m *r2**n)*(r_12**p)
+    else:
+        return ((r1**m*r2**n + r2**m*r1**n)*(r_12**p))/np.sqrt(2)
+    
+def phi_derivatives(m,n,p,alpha, r1, r2, r_12):
+    '''
+    Calculates the derivatives of teh polynomial part of phi wrt r1, r2, r12
+    '''
 
-def Hy_integrand_overlap(r1, r2, costh, phi_i, phi_j):
-    r_12 = r12(r1,r2, costh)
-    return phi_i(r1,r2,costh)*phi_j(r1,r2,costh)*((r1*r2)**2)
+    #To avoid divison by 0
+    if r1==0: r1 = 1e-10
+    if r2==0: r2 = 1e-10
+    if r_12==0: r_12 = 1e-10
 
+    exp_factor = np.exp(-alpha*(r1+r2))
 
-def STO_overlap(alpha_i, alpha_j):
-    limits = [ 
-        [0, np.inf],
-        [0, np.inf],
-        [-1, 1],
-    ]
+    #polynomial part of derivative
+    if m==n:
+        f = (r1**m)*r2**n
+        df_dr1 = m*(r1**(m-1))*r2**n
+        df_dr2 = n*(r1**m)*(r2**(n-1))
 
-    scale = 8*np.pi**2
-    return scale*nquad(STO_integrand_overlap, limits, args=(alpha_i, alpha_j), opts={"limit":100})[0]
+    else:
+        f = (r1**m*r2**n + r2**m*r1**n)/np.sqrt(2)
+        df_dr1 = (m*(r1**(m-1))*r2**n + n*r2**m*(r1**(n-1)))/np.sqrt(2)
+        df_dr2 = (n*(r1**m)*(r2**(n-1)) + m*(r2**(m-1))*(r1**n))/np.sqrt(2)
 
-def Hy_overlap(phi_i, phi_j):
-    limits = [ 
-        [0, np.inf],
-        [0, np.inf],
-        [-1, 1],
-    ]
-    scale = 8*np.pi**2
-    return scale*nquad(Hy_integrand_overlap, limits, args=(phi_i, phi_j), opts={"limit":100})[0]
+    g = r_12**p
+    dg_dr12 = p*r_12**(p-1)
 
-#Hij (just for potential component V initially):
-def STO_integrand_HV(r1, r2, costh, alpha_i, alpha_j, Z=2):
-    f = STO_phi(alpha_i, r1, r2)
-    g = STO_phi(alpha_j, r1, r2)
-    r_12 = r12(r1, r2, costh)
-    V = -Z*(1/r2+1/r2)+1/r_12
-    return f*V*g*((r1*r2)**2)
+    polynomial = f*g
+    dphi_dr1 = df_dr1 *g
+    dphi_dr2 = df_dr2 *g
+    dphi_dr12 = f *dg_dr12
 
-def Hy_integrand_HV(r1, r2, costh, phi_i, phi_j, Z=2):
-    r_12 = r12(r1, r2, costh)
-    V = -Z*(1/r2+1/r2)+1/r_12
-    return phi_i(r1,r2,r_12)*V*phi_j(r1,r2,r_12)*((r1*r2)**2)
+    #include exponential part in the derivative using product rule
+    dphi_dr1 = (dphi_dr1 - alpha*polynomial)*exp_factor
+    dphi_dr2 = (dphi_dr2 - alpha*polynomial)*exp_factor
+    dphi_dr12 = dphi_dr12*exp_factor
 
-def STO_H_potential(alpha_i, alpha_j, Z=2):
-    limits = [ 
-        [0, np.inf],
-        [0, np.inf],
-        [-1, 1],
-    ]
+    return dphi_dr1, dphi_dr2, dphi_dr12
 
-    scale = 8*np.pi**2
-    return scale*nquad(STO_integrand_HV, limits, args=(alpha_i, alpha_j), opts={"limit":100})[0]
+def integrand_S(r1, r2, r_12, mu, params_i, params_j, Z=2):
+    m_i, n_i, p_i, alpha_i = params_i
+    m_j, n_j, p_j, alpha_j = params_j
 
-def Hy_H_potential(phi_i, phi_j):
-    limits = [ 
-        [0, np.inf],
-        [0, np.inf],
-        [-1, 1],
-    ]
-    scale = 8*np.pi**2
-    return scale*nquad(Hy_integrand_HV, limits, args=(phi_i, phi_j), opts={"limit":100})[0]
+    phi_i = phi_polynomial(m_i, n_i, p_i, r1, r2, r_12)*np.exp(-alpha_i*(r1+r2))
+    phi_j = phi_polynomial(m_j, n_j, p_j, r1, r2, r_12)*np.exp(-alpha_j*(r1+r2))
+    return phi_i*phi_j
 
+def integrand_V(r1, r2, r_12, mu, params_i, params_j, Z=2):
+    m_i, n_i, p_i, alpha_i = params_i
+    m_j, n_j, p_j, alpha_j = params_j
 
-#numerical integration from -1 to 1 integral_a_^b f(x) ~ Sum_i^n wi *f(xi)
-from scipy.special import roots_legendre, roots_laguerre
-def Gauss_Legendre(f, a =-1 , b=1, n=100):
-    x, w = roots_legendre(n)
-    t = 0.5*(b-a)*x + 0.5*(b+a)
-    return 0.5*(b-a) * np.sum(w*f(t))
+    phi_i = phi_polynomial(m_i, n_i, p_i, r1, r2, r_12)*np.exp(-alpha_i*(r1+r2))
+    phi_j = phi_polynomial(m_j, n_j, p_j, r1, r2, r_12)*np.exp(-alpha_j*(r1+r2))
 
-#numerical integration for intgeral_0^inf exp(-x)f(x) ~ sum_i^n wi * f(xi)
-def Gauss_Laguerre(f, n =100):
-    x, w = roots_laguerre(n)
-    return np.sum(w * f(x))
+    V = -Z*(1/r1 + 1/r2) + 1/r_12
+    return phi_i *V *phi_j
 
-#analytic result for kinetic term of H with STO's
-#TODO: develop numerical method to solve kinetic term for hylleraas basis fumctions
-'''
-as only using radial functions for basis laplacian del^2 g(r) = g''(r) + 2/r * g'(r)
-For STO's and hamiltonian term above applied to phi_j this reduces to: -(alpha_j^2 - alpha_j(1/r1 + 1/r2))phi_j
+def integrand_T(r1, r2, r_12, mu, params_i, params_j, Z=2):
+    '''
+    m_i, n_i, p_i, alpha_i = params_i
+    m_j, n_j, p_j, alpha_j = params_j
 
-'''
-def STO_H_kinetic(alpha_i, alpha_j, Nr=40, Nu =40):
- #number for sum for radial components Nr
- #number of sum for cos(theta) components Nu
+    di_dr1, di_dr2, di_dr12 = phi_derivatives(m_i, n_i, p_i, alpha_i, r1, r2, r_12)
+    dj_dr1, dj_dr2, dj_dr12 = phi_derivatives(m_j, n_j, p_j, alpha_j, r1, r2, r_12)
 
-    factor = 8*((np.pi)**2)
-    beta = alpha_i +alpha_j
+    term1 = di_dr1 * dj_dr1 + di_dr12 * dj_dr12 + \
+            ((r1**2 - r2**2 + r_12**2) / (2 * r1 * r_12)) * (di_dr1 * dj_dr12 + di_dr12 * dj_dr1)
+    term2 = di_dr2 * dj_dr2 + di_dr12 * dj_dr12 + \
+            ((r2**2 - r1**2 + r_12**2) / (2 * r2 * r_12)) * (di_dr2 * dj_dr12 + di_dr12 * dj_dr2)
+    '''
+    m_i, n_i, p_i, alpha_i = params_i
+    m_j, n_j, p_j, alpha_j = params_j
 
-    # Gauss-Laguerre nodes/weights for integral int_0^inf e^{-x} f(x) dx
+    di_dr1, di_dr2, di_dr12 = phi_derivatives(m_i, n_i, p_i, alpha_i, r1, r2, r_12)
+    dj_dr1, dj_dr2, dj_dr12 = phi_derivatives(m_j, n_j, p_j, alpha_j, r1, r2, r_12)
+
+    # For coordinates (r1, r2, cos(theta_12)), the kinetic energy becomes:
+    # T = -0.5 * [∇₁² + ∇₂²]
+    # 
+    # The Laplacian in terms of (r1, r2, r12) involves:
+    # ∂r12/∂r1 = (r1 - r2*mu) / r12
+    # ∂r12/∂r2 = (r2 - r1*mu) / r12
+    # where mu = cos(theta_12)
+    
+    # Derivatives of r12 with respect to r1 and r2
+    dr12_dr1 = (r1 - r2 * mu) / r_12
+    dr12_dr2 = (r2 - r1 * mu) / r_12
+    
+    # Apply chain rule for gradients
+    # ∇₁φ in spherical coords involves ∂φ/∂r1 + (∂φ/∂r12)(∂r12/∂r1)
+    grad1_i = di_dr1 + di_dr12 * dr12_dr1
+    grad1_j = dj_dr1 + dj_dr12 * dr12_dr1
+    
+    grad2_i = di_dr2 + di_dr12 * dr12_dr2
+    grad2_j = dj_dr2 + dj_dr12 * dr12_dr2
+    
+    # Kinetic energy: 0.5 * (∇₁φ_i · ∇₁φ_j + ∇₂φ_i · ∇₂φ_j)
+    term1 = grad1_i * grad1_j
+    term2 = grad2_i * grad2_j
+    
+    return 0.5 * (term1 + term2)
+
+def compute_integral(integrand, params_i, params_j, Z, Nr=40, Nu=40):
+    beta = params_i[3] + params_j[3]
     x_nodes, x_w = roots_laguerre(Nr)
-    # Gauss-Legendre nodes/weights for mu in [-1,1]
     u_nodes, u_w = roots_legendre(Nu)
-
-    normalization = ((alpha_i**3)/np.pi)*((alpha_j**3)/np.pi)
-
-    T = 0 #initialize sum to zero
-    #Triple integral(sum) 
+    T = 0
     for p in range(Nr):
         x_p = x_nodes[p]
         w_p = x_w[p]
-        #change of variables from r -> xp/beta: dr -> dxp/beta
         r1 = x_p/beta
         jac_r1 = 1.0/beta
-
         for q in range(Nr):
             x_q = x_nodes[q]
             w_q = x_w[q]
             r2 = x_q/beta
             jac_r2 = 1.0/beta
 
-            laplacian = -(alpha_j**2 - alpha_j*(1/r1 + 1/r2))
-
-            #this is f(x) in int_0^inf exp(-x)*f(x)
-            F_r = normalization*laplacian*r1*r1*r2*r2
-            #phi_ij = phi(alpha_i,r1, r2)*phi(alpha_j, r1, r2)
-            radial_weight = w_p*w_q*jac_r1*jac_r2
-
-            #Don't need angular integral for STO's but will for more complex basis functions
+            F_r_mu = 0
             for k in range(Nu):
-                u= u_nodes[k]
-                w_u = u_w[k]
+                mu = u_nodes[k]
+                w_mu = u_w[k]
+                r_12 = r12(r1, r2, mu)
+                if r_12 == 0:
+                    continue
+                integrand_val = integrand(r1, r2, r_12, mu, params_i, params_j, Z)
+                F_r_mu += w_mu*integrand_val
+            total_integrand = F_r_mu * (r1**2) * (r2**2)
+            T += w_p*w_q *total_integrand *jac_r1*jac_r2
+    return 8*(np.pi**2)*T 
 
-                
-                #full intgrand including jacobian r1^2 r2^2
-                integrand = F_r *radial_weight*w_u
-
-                #accumulate with weights: integrand*radial_weight*w_u
-                T += integrand
-
-    return factor*T
-    #analytic result
-    #return 64 * (alpha_i *alpha_j)**4 / ((alpha_i +alpha_j)**6) 
-
-'''
-let a := alpha 
-Exact form of (del_1^2 +del_2^2)phi_i = added to latex file which must be added to git
-'''
-
-def Hy_lapacian(phi_i):
-    params = phi_i['params']
-    m,n,p,a = params[0], params[1], params[2], params[3]
-    #This is a fucking mess, might need to try sympy for symbolic differentiation
-    def laplacian(r1, r2, r12):
-        t1 = (2*a**2)*(r1**m * r2**n * r12**p)*(r1/r2 +1 + r2/r2)
-        t2 = -2*a*(r1**(m-1) * r2**(n-1) * r12**(p-1))*(m*r2*r12 + n*r1*r12 + 2*p*r1*r2) 
-        t3 = (r1**(m-2))*(r2**(n-2))*(r12**(p-2))*(m*(m-1)*r2**2 * r12**2 + n*(n-1)*r1**2*r12**2 + 2*p*(p-1)*r1**2*r2**2)
-        t4 = (2*r1**(m-1)*r2**(n-1)*r12**(p-1))*((m*r2*r12)/r1 + (n*r1*r12)/r2+ (2*p*r1*r2)/r12)
-        t5 = 2*((r1**2 + r2**2 - r12**2)/(r1*r2))*(m*n*r1**(m-1)*r1**(n-1)*r12**p - a*m*r1**(m)*r2**(n-1)*r12**p - a*n*r1**(m-1)*r2**n*r12**p + a**2*r1**m*r2**n*r12**p)
-        t6 = 2*((r1**2 - r2**2 + r12**2)/(r1*r12))*(m*p*r1**(m-1)*r2**n*r12**(p-1) - a*p*r1**m*r2**n*r12*(p-1))
-        t7 = 2*((-r1**2 + r2**2 + r12**2)/(r2*r12))*(n*p*r1**(m)*r2**(n-1)*r12**(p-1) - a*p*r1**m*r2**n*r12*(p-1))
-        P= t1+t2+t3+t4+t5+t6+t7
-        
-        return P 
-    return laplacian
-
-
-def initialize_matrices(alphas, hylleraas=False):
-    n = len(alphas)
+def initialize_matrices(basis, Z=2):
+    n = len(basis)
 
     #Initialize H and S matrices as 0,0s
     H = np.zeros((n,n))
     S = np.zeros((n,n))
 
     #Populate matrices with values from integrals
-    if hylleraas:
-        pass
-    else:
-        for i in range(n):
-            for j in range(n):
-                S[i,j] = STO_overlap(alphas[i], alphas[j])
-                H[i,j] = STO_H_potential(alphas[i], alphas[j]) + STO_H_kinetic(alphas[i], alphas[j])
+    print(f"Building S and H matirces for {n}x{n} basis")
+    for i in range(n):
+            for j in range(i, n):
+                params_i = basis[i]
+                params_j = basis[j]
+                S_ij = compute_integral(integrand_S, params_i, params_j, Z)
+                V_ij = compute_integral(integrand_V, params_i, params_j, Z)
+                T_ij = compute_integral(integrand_T, params_i, params_j, Z)
+                H_ij = V_ij + T_ij
+                S[i,j] = S[j, i] = S_ij
+                H[i,j] = H[j, i] = H_ij
     
     return H, S
 
 def main():
-    alphas = [ 0.5, 1, 1.5] #alphas for basis functions
-    H, S = initialize_matrices(alphas)
+    N_max = 2
+    alpha = 1.68
+    Z = 2
+
+    basis = hylleraas_basis(N_max, alpha)
+    H, S = initialize_matrices(basis, Z)
     E, C = eigh(H, S)
-    print(f"alpha values = {alphas}")
-    print(f"Energy eigenvalues: {E}")
-    print(f"Eigenvectors C = {C}")
+
+    print("\n ---Results---")
+    print(f"Basis set size (N_max = {N_max}): {len(basis)} functions")
+    print(f"Non-Linear paramter (alpha): {alpha}")
+    print(f"\n Ground State Energy: {E[0]:.8f} a.u.")
 
 if __name__ == "__main__":
     main()
