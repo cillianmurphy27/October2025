@@ -41,6 +41,8 @@ def hylleraas_basis(N_max=2, alpha = 1.68):
     return basis
 
 def r12(r1, r2, costh): #costh := cos(theta_12)
+    #for stabilty
+    costh = np.clip(costh, -1.0, 1.0)
     return np.sqrt(r1**2 + r2**2 - 2*r1*r2*costh)
 
 def phi_polynomial(m, n, p, r1, r2, r_12):
@@ -52,7 +54,7 @@ def phi_polynomial(m, n, p, r1, r2, r_12):
     else:
         return ((r1**m*r2**n + r2**m*r1**n)*(r_12**p))/np.sqrt(2)
     
-def phi_derivatives(m,n,p,alpha, r1, r2, r_12):
+def phi_derivatives(m,n,p,r1, r2, r_12):
     '''
     Calculates the derivatives of teh polynomial part of phi wrt r1, r2, r12
     '''
@@ -62,7 +64,7 @@ def phi_derivatives(m,n,p,alpha, r1, r2, r_12):
     if r2==0: r2 = 1e-10
     if r_12==0: r_12 = 1e-10
 
-    exp_factor = np.exp(-alpha*(r1+r2))
+    #exp_factor = np.exp(-alpha*(r1+r2))
 
     #polynomial part of derivative
     if m==n:
@@ -83,27 +85,30 @@ def phi_derivatives(m,n,p,alpha, r1, r2, r_12):
     dphi_dr2 = df_dr2 *g
     dphi_dr12 = f *dg_dr12
 
+    '''
     #include exponential part in the derivative using product rule
     dphi_dr1 = (dphi_dr1 - alpha*polynomial)*exp_factor
     dphi_dr2 = (dphi_dr2 - alpha*polynomial)*exp_factor
     dphi_dr12 = dphi_dr12*exp_factor
+    '''
+    
 
     return dphi_dr1, dphi_dr2, dphi_dr12
 
 def integrand_S(r1, r2, r_12, mu, params_i, params_j, Z=2):
-    m_i, n_i, p_i, alpha_i = params_i
-    m_j, n_j, p_j, alpha_j = params_j
+    m_i, n_i, p_i, _ = params_i
+    m_j, n_j, p_j, _ = params_j
 
-    phi_i = phi_polynomial(m_i, n_i, p_i, r1, r2, r_12)*np.exp(-alpha_i*(r1+r2))
-    phi_j = phi_polynomial(m_j, n_j, p_j, r1, r2, r_12)*np.exp(-alpha_j*(r1+r2))
+    phi_i = phi_polynomial(m_i, n_i, p_i, r1, r2, r_12)
+    phi_j = phi_polynomial(m_j, n_j, p_j, r1, r2, r_12)
     return phi_i*phi_j
 
 def integrand_V(r1, r2, r_12, mu, params_i, params_j, Z=2):
-    m_i, n_i, p_i, alpha_i = params_i
-    m_j, n_j, p_j, alpha_j = params_j
+    m_i, n_i, p_i, _ = params_i
+    m_j, n_j, p_j, _ = params_j
 
-    phi_i = phi_polynomial(m_i, n_i, p_i, r1, r2, r_12)*np.exp(-alpha_i*(r1+r2))
-    phi_j = phi_polynomial(m_j, n_j, p_j, r1, r2, r_12)*np.exp(-alpha_j*(r1+r2))
+    phi_i = phi_polynomial(m_i, n_i, p_i, r1, r2, r_12)
+    phi_j = phi_polynomial(m_j, n_j, p_j, r1, r2, r_12)
 
     V = -Z*(1/r1 + 1/r2) + 1/r_12
     return phi_i *V *phi_j
@@ -121,37 +126,64 @@ def integrand_T(r1, r2, r_12, mu, params_i, params_j, Z=2):
     term2 = di_dr2 * dj_dr2 + di_dr12 * dj_dr12 + \
             ((r2**2 - r1**2 + r_12**2) / (2 * r2 * r_12)) * (di_dr2 * dj_dr12 + di_dr12 * dj_dr2)
     '''
-    m_i, n_i, p_i, alpha_i = params_i
-    m_j, n_j, p_j, alpha_j = params_j
+    # Get alpha values
+    a_i = params_i[3]
+    a_j = params_j[3]
 
-    di_dr1, di_dr2, di_dr12 = phi_derivatives(m_i, n_i, p_i, alpha_i, r1, r2, r_12)
-    dj_dr1, dj_dr2, dj_dr12 = phi_derivatives(m_j, n_j, p_j, alpha_j, r1, r2, r_12)
+    # Get polynomial values P_i and P_j
+    m_i, n_i, p_i, _ = params_i
+    m_j, n_j, p_j, _ = params_j
+    P_i = phi_polynomial(m_i, n_i, p_i, r1, r2, r_12)
+    P_j = phi_polynomial(m_j, n_j, p_j, r1, r2, r_12)
 
-    # For coordinates (r1, r2, cos(theta_12)), the kinetic energy becomes:
-    # T = -0.5 * [∇₁² + ∇₂²]
-    # 
-    # The Laplacian in terms of (r1, r2, r12) involves:
-    # ∂r12/∂r1 = (r1 - r2*mu) / r12
-    # ∂r12/∂r2 = (r2 - r1*mu) / r12
-    # where mu = cos(theta_12)
+    # Get polynomial derivatives for P_i: (dPi/dr1, dPi/dr2, dPi/dr12)
+    di_dr1, di_dr2, di_dr12 = phi_derivatives(m_i, n_i, p_i, r1, r2, r_12)
+    # Get polynomial derivatives for P_j: (dPj/dr1, dPj/dr2, dPj/dr12)
+    dj_dr1, dj_dr2, dj_dr12 = phi_derivatives(m_j, n_j, p_j, r1, r2, r_12)
+
+    # --- Define dot product terms for clarity ---
+    # These are the terms my previous function simplified (incorrectly).
+
+    # Dot product (grad_1 . r1_hat)
+    r1_dot_r12_hat = (r1**2 - r2**2 + r_12**2) / (2 * r1 * r_12)
+    grad1_Pi_dot_r1_hat = di_dr1 + r1_dot_r12_hat * di_dr12
+    grad1_Pj_dot_r1_hat = dj_dr1 + r1_dot_r12_hat * dj_dr12
+
+    # Dot product (grad_2 . r2_hat)
+    r2_dot_r12_hat = (r2**2 - r1**2 + r_12**2) / (2 * r2 * r_12)
+    grad2_Pi_dot_r2_hat = di_dr2 + r2_dot_r12_hat * di_dr12
+    grad2_Pj_dot_r2_hat = dj_dr2 + r2_dot_r12_hat * dj_dr12
     
-    # Derivatives of r12 with respect to r1 and r2
-    dr12_dr1 = (r1 - r2 * mu) / r_12
-    dr12_dr2 = (r2 - r1 * mu) / r_12
+    # --- Term 1: (nabla_1 phi_i . nabla_1 phi_j) ---
+
+    # (grad_1 P_i . grad_1 P_j) in Hylleraas coordinates
+    grad1_Pi_dot_grad1_Pj = di_dr1 * dj_dr1 + di_dr12 * dj_dr12 + \
+        r1_dot_r12_hat * (di_dr1 * dj_dr12 + di_dr12 * dj_dr1)
+
+    # This is the full (nabla_1 phi_i . nabla_1 phi_j) / (Ei*Ej)
+    term1_full = (
+        grad1_Pi_dot_grad1_Pj       # Term 1: (grad_1 P_i . grad_1 P_j)
+        - a_j * P_j * grad1_Pi_dot_r1_hat  # Term 2: -a_j * (grad_1 P_i . r1_hat) * P_j
+        - a_i * P_i * grad1_Pj_dot_r1_hat  # Term 3: -a_i * (r1_hat . grad_1 P_j) * P_i
+        + a_i * a_j * P_i * P_j       # Term 4: +a_i*a_j * (r1_hat . r1_hat) * P_i*P_j
+    )
+
+    # --- Term 2: (nabla_2 phi_i . nabla_2 phi_j) ---
+
+    # (grad_2 P_i . grad_2 P_j) in Hylleraas coordinates
+    grad2_Pi_dot_grad2_Pj = di_dr2 * dj_dr2 + di_dr12 * dj_dr12 + \
+        r2_dot_r12_hat * (di_dr2 * dj_dr12 + di_dr12 * dj_dr2)
+        
+    # This is the full (nabla_2 phi_i . nabla_2 phi_j) / (Ei*Ej)
+    term2_full = (
+        grad2_Pi_dot_grad2_Pj       # Term 1
+        - a_j * P_j * grad2_Pi_dot_r2_hat  # Term 2
+        - a_i * P_i * grad2_Pj_dot_r2_hat  # Term 3
+        + a_i * a_j * P_i * P_j       # Term 4
+    )
     
-    # Apply chain rule for gradients
-    # ∇₁φ in spherical coords involves ∂φ/∂r1 + (∂φ/∂r12)(∂r12/∂r1)
-    grad1_i = di_dr1 + di_dr12 * dr12_dr1
-    grad1_j = dj_dr1 + dj_dr12 * dr12_dr1
-    
-    grad2_i = di_dr2 + di_dr12 * dr12_dr2
-    grad2_j = dj_dr2 + dj_dr12 * dr12_dr2
-    
-    # Kinetic energy: 0.5 * (∇₁φ_i · ∇₁φ_j + ∇₂φ_i · ∇₂φ_j)
-    term1 = grad1_i * grad1_j
-    term2 = grad2_i * grad2_j
-    
-    return 0.5 * (term1 + term2)
+    # The total kinetic integrand is 0.5 * (term1_full + term2_full)
+    return 0.5 * (term1_full + term2_full)
 
 def compute_integral(integrand, params_i, params_j, Z, Nr=40, Nu=40):
     beta = params_i[3] + params_j[3]
@@ -174,7 +206,7 @@ def compute_integral(integrand, params_i, params_j, Z, Nr=40, Nu=40):
                 mu = u_nodes[k]
                 w_mu = u_w[k]
                 r_12 = r12(r1, r2, mu)
-                if r_12 == 0:
+                if r_12 < 1e-10:
                     continue
                 integrand_val = integrand(r1, r2, r_12, mu, params_i, params_j, Z)
                 F_r_mu += w_mu*integrand_val
@@ -190,7 +222,7 @@ def initialize_matrices(basis, Z=2):
     S = np.zeros((n,n))
 
     #Populate matrices with values from integrals
-    print(f"Building S and H matirces for {n}x{n} basis")
+    print(f"\n ---Building S and H matirces for {n}x{n} basis ---")
     for i in range(n):
             for j in range(i, n):
                 params_i = basis[i]
@@ -204,8 +236,9 @@ def initialize_matrices(basis, Z=2):
     
     return H, S
 
+GROUND_STATE_E = -2.90372
 def main():
-    N_max = 2
+    N_max = 4
     alpha = 1.68
     Z = 2
 
@@ -216,7 +249,16 @@ def main():
     print("\n ---Results---")
     print(f"Basis set size (N_max = {N_max}): {len(basis)} functions")
     print(f"Non-Linear paramter (alpha): {alpha}")
-    print(f"\n Ground State Energy: {E[0]:.8f} a.u.")
+    print(f"Calculated Ground State Energy: {E[0]:.8f} a.u.")
+    print(f"Actual Ground State Energy = {GROUND_STATE_E} a.u. ")
+    assert E[0] >= GROUND_STATE_E
 
 if __name__ == "__main__":
     main()
+'''
+Results:
+N=4, 22x22 matirces E_0 = -2.90153083
+N=3, 13x13 matrices E_0 = -2.90139411
+N=2, 7x7 matrices E_0 = -2.90092400
+N=1, 3x3 matrices E_0 = -2.88772343
+'''
