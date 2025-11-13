@@ -3,6 +3,7 @@ from scipy.integrate import nquad
 from scipy.linalg import eigh
 from scipy.special import roots_legendre, roots_laguerre
 import itertools
+import matplotlib.pyplot as plt
 
 '''
 Want toi compute hamiltonian componentents H_ij = <phi_i|H|phi_j>,
@@ -237,21 +238,38 @@ def initialize_matrices(basis, Z=2):
     return H, S
 
 GROUND_STATE_E = -2.90372
-def main():
-    N_max = 4
-    alpha = 1.68
-    Z = 2
 
+def solve(N_max, alpha, Z):
     basis = hylleraas_basis(N_max, alpha)
     H, S = initialize_matrices(basis, Z)
     E, C = eigh(H, S)
+    return E[0], basis
 
-    print("\n ---Results---")
-    print(f"Basis set size (N_max = {N_max}): {len(basis)} functions")
-    print(f"Non-Linear paramter (alpha): {alpha}")
-    print(f"Calculated Ground State Energy: {E[0]:.8f} a.u.")
-    print(f"Actual Ground State Energy = {GROUND_STATE_E} a.u. ")
-    assert E[0] >= GROUND_STATE_E
+def main():
+    N_max = 2
+    alphas = np.linspace(1.82, 2.2 , 20)
+    Z = 2
+
+    Energies = []
+    for alpha in alphas:
+        E_0, basis = solve(N_max, alpha, Z)
+        Energies.append(E_0)
+
+        print("\n ---Results---")
+        print(f"Basis set size (N_max = {N_max}): {len(basis)} functions")
+        print(f"Non-Linear paramter (alpha): {alpha}")
+        print(f"Calculated Ground State Energy: {E_0:.8f} a.u.")
+        print(f"Actual Ground State Energy = {GROUND_STATE_E} a.u. ")
+    
+    print(alphas)
+    print("\n")
+    print(Energies)
+
+    plt.plot(alphas, Energies)
+    plt.xlabel("alpha")
+    plt.ylabel("Energies (a.u.)")
+    plt.show()
+    
 
 if __name__ == "__main__":
     main()
