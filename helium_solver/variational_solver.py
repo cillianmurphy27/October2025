@@ -223,7 +223,7 @@ def initialize_matrices(basis, Z=2):
     S = np.zeros((n,n))
 
     #Populate matrices with values from integrals
-    print(f"\n ---Building S and H matirces for {n}x{n} basis ---")
+    #print(f"\n ---Building S and H matirces for {n}x{n} basis: ---")
     for i in range(n):
             for j in range(i, n):
                 params_i = basis[i]
@@ -234,13 +234,32 @@ def initialize_matrices(basis, Z=2):
                 H_ij = V_ij + T_ij
                 S[i,j] = S[j, i] = S_ij
                 H[i,j] = H[j, i] = H_ij
-    
+    #print(f"S-matrix eigenvalues: {np.linalg.eigvalsh(S)} \n")
     return H, S
 
 GROUND_STATE_E = -2.90372
 
-def solve(N_max, alpha, Z):
-    basis = hylleraas_basis(N_max, alpha)
+def multiple_alpha_basis(alphas, N_max=2):
+    
+    basis_structure = []
+    for m,n,p in itertools.product(range(N_max+1), repeat = 3):
+        if m+n+p <= N_max and m >= n:
+            basis_structure.append((m, n, p))
+    
+    if len(alphas) != len(basis_structure):
+        raise ValueError(f"Expected {len(basis_structure)} alphas, got {len(alphas)}")
+    
+    basis =[]
+    for i, (m,n,p) in enumerate(basis_structure):
+        basis.append((m,n,p,alphas[i]))
+
+    return basis
+
+def solve(alphas, N_max=2, Z=2, multi_alpha=True):
+    if multi_alpha:
+        basis = multiple_alpha_basis(alphas)
+    else:
+        basis = hylleraas_basis(N_max, alphas)
     H, S = initialize_matrices(basis, Z)
     E, C = eigh(H, S)
     return E[0], basis
@@ -264,6 +283,8 @@ def main():
     print(alphas)
     print("\n")
     print(Energies)
+    print("\n")
+    print(list(alphas))
 
     plt.plot(alphas, Energies)
     plt.xlabel("alpha")
